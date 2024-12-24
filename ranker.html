@@ -1,0 +1,376 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>RankThings</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      background: #f0f0f0;
+      margin: 0;
+      padding: 0;
+    }
+
+    .container {
+      width: 80%;
+      max-width: 600px;
+      margin: 40px auto;
+      background: #f0f0f0;
+      padding: 20px;
+      border-radius: 5px;
+    }
+
+    h1, h2 {
+      text-align: center;
+      color: #333;
+    }
+
+    textarea {
+      display: block;
+      margin: 0 auto 20px auto;  /* auto left/right for centering, 20px bottom spacing */
+      width: 80%;
+      max-width: 400px;
+      height: 150px;
+      resize: none;        
+      overflow-y: scroll;  
+      font-size: 16px;
+      padding: 10px;
+      box-sizing: border-box;
+    }
+
+    /* Updated button styles: black text, black border, no background */
+    button {
+      display: inline-block;
+      padding: 10px 20px;
+      margin: 10px 5px;
+      font-size: 16px;
+      cursor: pointer;
+      border: 1px solid #000;
+      border-radius: 4px;
+      background-color: #f0f0f0;
+      color: #000;
+    }
+
+    button:hover {
+      background-color: white; 
+    }
+
+    .center {
+      text-align: center;
+    }
+
+    .hidden {
+      display: none;
+    }
+
+    .rankItem {
+      margin: 5px 0;
+    }
+
+    /* Additional styling for "Add Item" input below the ranking */
+    #addItemSection {
+      margin-top: 20px;
+      text-align: center;
+    }
+    #addItemInput {
+      padding: 8px;
+      font-size: 16px;
+      width: 200px;
+      margin-right: 10px;
+      box-sizing: border-box;
+    }
+
+    /* A small line of text for copying link */
+    #copyLinkContainer {
+      margin: 10px;
+      text-align: center;
+      color: #666;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>Rank Things</h1>
+    <div id="copyLinkContainer">
+        Add a list of items and choose between them to build your complete ranking.
+    </div>
+
+    <!-- Textarea for user to input items (one per line) -->
+    <textarea
+      id="itemInput"
+      placeholder="Enter items here, one per line"
+    ></textarea>
+
+    <!-- Button to start or restart ranking -->
+    <div class="center">
+      <button id="startButton">Rank!</button>
+    </div>
+
+    <!-- Phase: Inserting each new item into the ranking initially -->
+    <div id="comparePhase" class="hidden">
+      <h2 id="compareTitle">Comparing Items...</h2>
+      <div id="compareContainer" class="center"></div>
+    </div>
+
+    <!-- Final Results + "Add Item" Section -->
+    <div id="results" class="hidden">
+      <h2>Results:</h2>
+      <div id="finalRankings"></div>
+
+      <!-- New item input & button, displayed below the final rankings -->
+      <div id="addItemSection">
+        <input 
+          id="addItemInput"
+          type="text"
+          placeholder="new item"
+        />
+        <button id="addItemButton">Add Item</button>
+      </div>
+
+      <!-- Small line prompting user to copy link -->
+      <div id="copyLinkContainer">
+        <i>Copy the link to come back and change this ranking!</i>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    /***********************************************
+     * DOM references
+     ***********************************************/
+    const itemInput = document.getElementById('itemInput');
+    const startButton = document.getElementById('startButton');
+    const comparePhase = document.getElementById('comparePhase');
+    const compareTitle = document.getElementById('compareTitle');
+    const compareContainer = document.getElementById('compareContainer');
+    const resultsDiv = document.getElementById('results');
+    const finalRankingsDiv = document.getElementById('finalRankings');
+    const addItemInput = document.getElementById('addItemInput');
+    const addItemButton = document.getElementById('addItemButton');
+
+    /***********************************************
+     * Global ranking state
+     ***********************************************/
+    let rankedList = [];        // Final ordered list (best to worst)
+    let items = [];             // For the initial pass
+    let currentItemIndex = 0;   // For the initial pass
+    let comparisonIndex = 0;    // Current comparison location in rankedList
+    let currentItem = null;     // The item we are trying to place
+    let isAddingSingleItem = false;
+
+    /***********************************************
+     * On Page Load: Check if "final" is in URL
+     ***********************************************/
+    (function checkForSavedRanking() {
+      const params = new URLSearchParams(window.location.search);
+      const finalParam = params.get('final');
+      if (finalParam) {
+        // We have a pre-made final ranking
+        try {
+          rankedList = JSON.parse(decodeURIComponent(finalParam));
+          // Show final rankings immediately
+          showFinalResultsDirectly();
+        } catch (e) {
+          console.warn('Failed to parse "final" param:', e);
+          // If parse fails, we just ignore it and let user rank from scratch
+        }
+      }
+    })();
+
+    // If there's a pre-made final ranking, skip the initial ranking
+    // and show results
+    function showFinalResultsDirectly() {
+      comparePhase.classList.add('hidden');
+      resultsDiv.classList.remove('hidden');
+      renderRankings();
+    }
+
+    /***********************************************
+     * Start/Restart Ranking Button
+     ***********************************************/
+    startButton.addEventListener('click', function() {
+      // 1. Reset all relevant variables
+      items = [];
+      rankedList = [];
+      currentItemIndex = 0;
+      comparisonIndex = 0;
+      currentItem = null;
+      isAddingSingleItem = false;
+
+      // 2. Hide or reset UI elements
+      comparePhase.classList.add('hidden');
+      resultsDiv.classList.add('hidden');
+      finalRankingsDiv.innerHTML = '';
+      addItemInput.value = '';
+
+      // 3. Re-fetch items from the textarea
+      const inputLines = itemInput.value
+        .split('\n')
+        .map(line => line.trim())
+        .filter(line => line !== '');
+
+      if (inputLines.length < 2) {
+        alert('Please enter at least two items for ranking.');
+        return;
+      }
+
+      // 4. Initialize items for the first ranking pass
+      items = inputLines;
+
+      // 5. Show the comparePhase section & begin the ranking process
+      comparePhase.classList.remove('hidden');
+      startRankingProcess();
+
+      // 6. Clear the "final" param from the URL (so page refresh won't skip)
+      clearFinalParamInURL();
+    });
+
+    /***********************************************
+     * The main ranking process (initial pass)
+     ***********************************************/
+    function startRankingProcess() {
+      // Insert the first item automatically
+      rankedList.push(items[0]);
+      currentItemIndex = 1;
+
+      // Proceed with insertion for the rest
+      insertNextItem();
+    }
+
+    function insertNextItem() {
+      if (currentItemIndex >= items.length) {
+        // All initial items placed, show results
+        showResults();
+        return;
+      }
+
+      currentItem = items[currentItemIndex];
+      comparisonIndex = 0;
+
+      renderComparison();
+    }
+
+    /***********************************************
+     * Inserting a new single item (after results)
+     ***********************************************/
+    addItemButton.addEventListener('click', function() {
+      const newItem = addItemInput.value.trim();
+      if (!newItem) {
+        alert('Please enter an item to add.');
+        return;
+      }
+      // Reset input
+      addItemInput.value = '';
+
+      // We'll reuse the same insertion logic:
+      // 1. Hide results temporarily
+      resultsDiv.classList.add('hidden');
+      // 2. Mark we are in "single item add" mode
+      isAddingSingleItem = true;
+      // 3. Set up current item
+      currentItem = newItem;
+      comparisonIndex = 0;
+      // 4. Show compare phase
+      comparePhase.classList.remove('hidden');
+      renderComparison();
+    });
+
+    /***********************************************
+     * Render the comparison UI
+     ***********************************************/
+    function renderComparison() {
+      // If we've compared currentItem against everyone in rankedList,
+      // place it at the bottom
+      if (comparisonIndex >= rankedList.length) {
+        rankedList.push(currentItem);
+
+        if (isAddingSingleItem) {
+          finishSingleItemAdd();
+        } else {
+          currentItemIndex++;
+          insertNextItem();
+        }
+        return;
+      }
+
+      // Compare currentItem with rankedList[comparisonIndex]
+      const compareWithItem = rankedList[comparisonIndex];
+      compareTitle.textContent = `Pick One:`;
+
+      compareContainer.innerHTML = `
+        <button onclick="chooseItem('${currentItem}', '${compareWithItem}')">${currentItem}</button>
+        <button onclick="chooseItem('${compareWithItem}', '${currentItem}')">${compareWithItem}</button>
+      `;
+    }
+
+    /***********************************************
+     * The user picks one of the two items
+     ***********************************************/
+    window.chooseItem = function(preferredItem, otherItem) {
+      if (preferredItem === currentItem) {
+        // Insert currentItem *above* compareWithItem
+        rankedList.splice(comparisonIndex, 0, currentItem);
+        if (isAddingSingleItem) {
+          finishSingleItemAdd();
+        } else {
+          currentItemIndex++;
+          insertNextItem();
+        }
+      } else {
+        // Move to the next item in the rankedList
+        comparisonIndex++;
+        renderComparison();
+      }
+    };
+
+    /***********************************************
+     * Show Final Results (Initial pass done)
+     ***********************************************/
+    function showResults() {
+      comparePhase.classList.add('hidden');
+      resultsDiv.classList.remove('hidden');
+      renderRankings();
+      // Save final result in URL
+      setFinalParamInURL(rankedList);
+    }
+
+    function finishSingleItemAdd() {
+      comparePhase.classList.add('hidden');
+      resultsDiv.classList.remove('hidden');
+      renderRankings();
+      // Update the final URL
+      setFinalParamInURL(rankedList);
+      isAddingSingleItem = false;
+    }
+
+    /***********************************************
+     * Render the finalRankingsDiv from rankedList
+     ***********************************************/
+    function renderRankings() {
+      finalRankingsDiv.innerHTML = '';
+      rankedList.forEach((item, index) => {
+        const rankDiv = document.createElement('div');
+        rankDiv.classList.add('rankItem');
+        rankDiv.textContent = `#${index + 1}. ${item}`;
+        finalRankingsDiv.appendChild(rankDiv);
+      });
+    }
+
+    /***********************************************
+     * Utilities for URL Preservation
+     ***********************************************/
+    // 1. Set the ?final= param to the URL
+    function setFinalParamInURL(rankingArray) {
+      const finalStr = encodeURIComponent(JSON.stringify(rankingArray));
+      const baseUrl = window.location.origin + window.location.pathname;
+      window.history.replaceState({}, '', baseUrl + '?final=' + finalStr);
+    }
+
+    // 2. Clear any ?final= param from the URL
+    function clearFinalParamInURL() {
+      const baseUrl = window.location.origin + window.location.pathname;
+      window.history.replaceState({}, '', baseUrl);
+    }
+  </script>
+</body>
+</html>
