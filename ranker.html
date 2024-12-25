@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <title>RankThings</title>
+  <title>RankThings!</title>
   <style>
     body {
       font-family: Arial, sans-serif;
@@ -25,34 +25,43 @@
       color: #333;
     }
 
+    /* Textarea: centered, non-resizable */
     textarea {
       display: block;
-      margin: 0 auto 20px auto;  /* auto left/right for centering, 20px bottom spacing */
+      margin: 0 auto 20px auto;
       width: 80%;
       max-width: 400px;
       height: 150px;
-      resize: none;        
-      overflow-y: scroll;  
+      resize: none;
+      overflow-y: scroll;
       font-size: 16px;
       padding: 10px;
       box-sizing: border-box;
     }
 
-    /* Updated button styles: black text, black border, no background */
+    /* Buttons: black text, black border, no background */
     button {
-      display: inline-block;
       padding: 10px 20px;
-      margin: 10px 5px;
+      margin: 10px auto; /* space around each button */
       font-size: 16px;
       cursor: pointer;
       border: 1px solid #000;
       border-radius: 4px;
       background-color: #f0f0f0;
       color: #000;
+      display: inline-block; /* default */
     }
 
     button:hover {
-      background-color: white; 
+      background-color: white;
+    }
+
+    /* Stacked comparison buttons: make them block-level 
+       so each is on its own line. */
+    .compareBtn {
+      display: block;
+      width: 50%;          /* optional, so they're narrower if you want */
+      max-width: 300px;    /* adjust as needed */
     }
 
     .center {
@@ -67,7 +76,6 @@
       margin: 5px 0;
     }
 
-    /* Additional styling for "Add Item" input below the ranking */
     #addItemSection {
       margin-top: 20px;
       text-align: center;
@@ -80,7 +88,6 @@
       box-sizing: border-box;
     }
 
-    /* A small line of text for copying link */
     #copyLinkContainer {
       margin: 10px;
       text-align: center;
@@ -92,7 +99,7 @@
   <div class="container">
     <h1>Rank Things</h1>
     <div id="copyLinkContainer">
-        Add a list of items and choose between them to build your complete ranking.
+      Add a list of items and choose between them to build your complete ranking.
     </div>
 
     <!-- Textarea for user to input items (one per line) -->
@@ -106,7 +113,7 @@
       <button id="startButton">Rank!</button>
     </div>
 
-    <!-- Phase: Inserting each new item into the ranking initially -->
+    <!-- Compare Phase (Binary Insertion) -->
     <div id="comparePhase" class="hidden">
       <h2 id="compareTitle">Comparing Items...</h2>
       <div id="compareContainer" class="center"></div>
@@ -117,7 +124,6 @@
       <h2>Results:</h2>
       <div id="finalRankings"></div>
 
-      <!-- New item input & button, displayed below the final rankings -->
       <div id="addItemSection">
         <input 
           id="addItemInput"
@@ -127,7 +133,6 @@
         <button id="addItemButton">Add Item</button>
       </div>
 
-      <!-- Small line prompting user to copy link -->
       <div id="copyLinkContainer">
         <i>Copy the link to come back and change this ranking!</i>
       </div>
@@ -151,34 +156,34 @@
     /***********************************************
      * Global ranking state
      ***********************************************/
-    let rankedList = [];        // Final ordered list (best to worst)
-    let items = [];             // For the initial pass
-    let currentItemIndex = 0;   // For the initial pass
-    let comparisonIndex = 0;    // Current comparison location in rankedList
-    let currentItem = null;     // The item we are trying to place
+    let rankedList = [];  // Final ordered list
+    let items = [];       // Items from textarea for the initial pass
+    let currentItemIndex = 0;
+    let currentItem = null;
     let isAddingSingleItem = false;
 
+    // For binary insertion
+    let lowIndex = 0;
+    let highIndex = 0;
+    let midIndex = 0;
+
     /***********************************************
-     * On Page Load: Check if "final" is in URL
+     * On Page Load: check if "final" in URL
      ***********************************************/
     (function checkForSavedRanking() {
       const params = new URLSearchParams(window.location.search);
       const finalParam = params.get('final');
       if (finalParam) {
-        // We have a pre-made final ranking
         try {
           rankedList = JSON.parse(decodeURIComponent(finalParam));
-          // Show final rankings immediately
           showFinalResultsDirectly();
         } catch (e) {
           console.warn('Failed to parse "final" param:', e);
-          // If parse fails, we just ignore it and let user rank from scratch
+          // If parse fails, user can just proceed normally
         }
       }
     })();
 
-    // If there's a pre-made final ranking, skip the initial ranking
-    // and show results
     function showFinalResultsDirectly() {
       comparePhase.classList.add('hidden');
       resultsDiv.classList.remove('hidden');
@@ -186,187 +191,178 @@
     }
 
     /***********************************************
-     * Start/Restart Ranking Button
+     * Start Ranking
      ***********************************************/
     startButton.addEventListener('click', function() {
-      // 1. Reset all relevant variables
+      // Reset everything
       items = [];
       rankedList = [];
       currentItemIndex = 0;
-      comparisonIndex = 0;
       currentItem = null;
       isAddingSingleItem = false;
 
-      // 2. Hide or reset UI elements
+      lowIndex = 0;
+      highIndex = 0;
+      midIndex = 0;
+
       comparePhase.classList.add('hidden');
       resultsDiv.classList.add('hidden');
       finalRankingsDiv.innerHTML = '';
       addItemInput.value = '';
 
-      // 3. Re-fetch items from the textarea
+      // Read from textarea
       const inputLines = itemInput.value
         .split('\n')
         .map(line => line.trim())
         .filter(line => line !== '');
 
       if (inputLines.length < 2) {
-        alert('Please enter at least two items for ranking.');
+        alert('Please enter at least two items.');
         return;
       }
 
-      // 4. Initialize items for the first ranking pass
       items = inputLines;
-
-      // 5. Show the comparePhase section & begin the ranking process
-      comparePhase.classList.remove('hidden');
-      startRankingProcess();
-
-      // 6. Clear the "final" param from the URL (so page refresh won't skip)
-      clearFinalParamInURL();
-    });
-
-    /***********************************************
-     * The main ranking process (initial pass)
-     ***********************************************/
-    function startRankingProcess() {
-      // Insert the first item automatically
+      // Insert first item without comparison
       rankedList.push(items[0]);
       currentItemIndex = 1;
 
-      // Proceed with insertion for the rest
-      insertNextItem();
-    }
+      comparePhase.classList.remove('hidden');
+      clearFinalParamInURL();
 
-    function insertNextItem() {
+      // Insert the rest
+      doNextInsertion();
+    });
+
+    /***********************************************
+     * Insert the next item (initial pass)
+     ***********************************************/
+    function doNextInsertion() {
       if (currentItemIndex >= items.length) {
-        // All initial items placed, show results
+        // All items placed
         showResults();
         return;
       }
-
       currentItem = items[currentItemIndex];
-      comparisonIndex = 0;
-
-      renderComparison();
+      initBinarySearch();
     }
 
     /***********************************************
-     * Inserting a new single item (after results)
+     * Add a single new item after results
      ***********************************************/
-    addItemButton.addEventListener('click', function() {
+    addItemButton.addEventListener('click', () => {
       const newItem = addItemInput.value.trim();
       if (!newItem) {
         alert('Please enter an item to add.');
         return;
       }
-      // Reset input
       addItemInput.value = '';
 
-      // We'll reuse the same insertion logic:
-      // 1. Hide results temporarily
       resultsDiv.classList.add('hidden');
-      // 2. Mark we are in "single item add" mode
-      isAddingSingleItem = true;
-      // 3. Set up current item
-      currentItem = newItem;
-      comparisonIndex = 0;
-      // 4. Show compare phase
       comparePhase.classList.remove('hidden');
-      renderComparison();
+
+      isAddingSingleItem = true;
+      currentItem = newItem;
+      initBinarySearch();
     });
 
     /***********************************************
-     * Render the comparison UI
+     * Binary Search init
      ***********************************************/
-    function renderComparison() {
-      // If we've compared currentItem against everyone in rankedList,
-      // place it at the bottom
-      if (comparisonIndex >= rankedList.length) {
-        rankedList.push(currentItem);
-
-        if (isAddingSingleItem) {
-          finishSingleItemAdd();
-        } else {
-          currentItemIndex++;
-          insertNextItem();
-        }
-        return;
-      }
-
-      // Compare currentItem with rankedList[comparisonIndex]
-      const compareWithItem = rankedList[comparisonIndex];
-      compareTitle.textContent = `Pick One:`;
-
-      compareContainer.innerHTML = `
-        <button onclick="chooseItem('${currentItem}', '${compareWithItem}')">${currentItem}</button>
-        <button onclick="chooseItem('${compareWithItem}', '${currentItem}')">${compareWithItem}</button>
-      `;
+    function initBinarySearch() {
+      lowIndex = 0;
+      highIndex = rankedList.length;
+      renderComparisonBinary();
     }
 
     /***********************************************
-     * The user picks one of the two items
+     * Render a comparison (two stacked buttons)
      ***********************************************/
-    window.chooseItem = function(preferredItem, otherItem) {
-      if (preferredItem === currentItem) {
-        // Insert currentItem *above* compareWithItem
-        rankedList.splice(comparisonIndex, 0, currentItem);
-        if (isAddingSingleItem) {
-          finishSingleItemAdd();
-        } else {
-          currentItemIndex++;
-          insertNextItem();
-        }
-      } else {
-        // Move to the next item in the rankedList
-        comparisonIndex++;
-        renderComparison();
+    function renderComparisonBinary() {
+      // If low >= high, we've found the spot
+      if (lowIndex >= highIndex) {
+        rankedList.splice(lowIndex, 0, currentItem);
+        finishInsertion();
+        return;
       }
-    };
+
+      midIndex = Math.floor((lowIndex + highIndex) / 2);
+      const compareWithItem = rankedList[midIndex];
+
+      compareTitle.textContent = 'Pick One:';
+      compareContainer.innerHTML = ''; // Clear old UI
+
+      // Create two stacked buttons
+      const button1 = document.createElement('button');
+      button1.textContent = currentItem;
+      button1.classList.add('compareBtn'); 
+      button1.addEventListener('click', () => {
+        // If user prefers the new item
+        highIndex = midIndex;
+        renderComparisonBinary();
+      });
+
+      const button2 = document.createElement('button');
+      button2.textContent = compareWithItem;
+      button2.classList.add('compareBtn');
+      button2.addEventListener('click', () => {
+        // If user prefers the existing item
+        lowIndex = midIndex + 1;
+        renderComparisonBinary();
+      });
+
+      // Append them
+      compareContainer.appendChild(button1);
+      compareContainer.appendChild(button2);
+    }
 
     /***********************************************
-     * Show Final Results (Initial pass done)
+     * Finish insertion of the current item
+     ***********************************************/
+    function finishInsertion() {
+      if (isAddingSingleItem) {
+        isAddingSingleItem = false;
+        comparePhase.classList.add('hidden');
+        resultsDiv.classList.remove('hidden');
+        renderRankings();
+        setFinalParamInURL(rankedList);
+      } else {
+        currentItemIndex++;
+        doNextInsertion();
+      }
+    }
+
+    /***********************************************
+     * Show final results
      ***********************************************/
     function showResults() {
       comparePhase.classList.add('hidden');
       resultsDiv.classList.remove('hidden');
       renderRankings();
-      // Save final result in URL
       setFinalParamInURL(rankedList);
-    }
-
-    function finishSingleItemAdd() {
-      comparePhase.classList.add('hidden');
-      resultsDiv.classList.remove('hidden');
-      renderRankings();
-      // Update the final URL
-      setFinalParamInURL(rankedList);
-      isAddingSingleItem = false;
     }
 
     /***********************************************
-     * Render the finalRankingsDiv from rankedList
+     * Render finalRankings
      ***********************************************/
     function renderRankings() {
       finalRankingsDiv.innerHTML = '';
       rankedList.forEach((item, index) => {
-        const rankDiv = document.createElement('div');
-        rankDiv.classList.add('rankItem');
-        rankDiv.textContent = `#${index + 1}. ${item}`;
-        finalRankingsDiv.appendChild(rankDiv);
+        const div = document.createElement('div');
+        div.classList.add('rankItem');
+        div.textContent = `#${index + 1}. ${item}`;
+        finalRankingsDiv.appendChild(div);
       });
     }
 
     /***********************************************
      * Utilities for URL Preservation
      ***********************************************/
-    // 1. Set the ?final= param to the URL
     function setFinalParamInURL(rankingArray) {
       const finalStr = encodeURIComponent(JSON.stringify(rankingArray));
       const baseUrl = window.location.origin + window.location.pathname;
       window.history.replaceState({}, '', baseUrl + '?final=' + finalStr);
     }
 
-    // 2. Clear any ?final= param from the URL
     function clearFinalParamInURL() {
       const baseUrl = window.location.origin + window.location.pathname;
       window.history.replaceState({}, '', baseUrl);
